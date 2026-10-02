@@ -1,0 +1,1037 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SwapChef — Ingredient Substitution Calculator | Emergency Ingredient Swaps</title>
+<meta name="description" content="SwapChef is a free ingredient substitution calculator. Find what to substitute for eggs, butter, milk, flour and 70+ ingredients, swap a whole recipe at once, check allergen conflicts and scale reverse-pantry swaps automatically.">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: { extend: { colors: {
+    cream: '#FFF8F0', terra: '#E2725B', terradark: '#C65A43', herb: '#2F5233', herblight: '#4A7A4F',
+    cork: '#B9835A', corkdark: '#9A6B45', cardcream: '#FFFDF7', ink: '#3B2F2A'
+  }, fontFamily: { hand: ['"Segoe Print"','"Comic Sans MS"','cursive'], serif2: ['Georgia','serif'] } } }
+}
+</script>
+<style>
+  body { background:#FFF8F0; color:#3B2F2A; }
+  .corkboard {
+    background-color:#B9835A;
+    background-image:
+      radial-gradient(rgba(0,0,0,.10) 1.5px, transparent 1.6px),
+      radial-gradient(rgba(255,255,255,.10) 1px, transparent 1.2px),
+      radial-gradient(rgba(0,0,0,.06) 2.5px, transparent 2.6px);
+    background-size: 22px 22px, 34px 34px, 55px 55px;
+    background-position: 0 0, 11px 7px, 20px 15px;
+    border: 10px solid #7d5636;
+    border-radius: 14px;
+    box-shadow: inset 0 0 60px rgba(0,0,0,.25), 0 10px 30px rgba(0,0,0,.15);
+  }
+  .index-card {
+    background:#FFFDF7;
+    background-image: repeating-linear-gradient(transparent, transparent 27px, rgba(47,82,51,.08) 28px);
+    border-radius: 4px;
+    box-shadow: 0 8px 20px rgba(0,0,0,.22);
+    position: relative;
+  }
+  .tilt-l { transform: rotate(-1.1deg); }
+  .tilt-r { transform: rotate(.9deg); }
+  .tilt-0 { transform: rotate(-.3deg); }
+  .washi {
+    position:absolute; top:-13px; left:50%; transform:translateX(-50%) rotate(-4deg);
+    width:120px; height:28px; z-index:2;
+    background: repeating-linear-gradient(45deg, rgba(255,255,255,.18) 0 8px, transparent 8px 16px), rgba(226,114,91,.82);
+    box-shadow: 0 2px 4px rgba(0,0,0,.2);
+    clip-path: polygon(2% 0, 98% 4%, 100% 96%, 0 100%);
+  }
+  .washi.green { background: repeating-linear-gradient(-45deg, rgba(255,255,255,.18) 0 8px, transparent 8px 16px), rgba(47,82,51,.80); transform:translateX(-50%) rotate(3deg); }
+  .washi.gold { background: repeating-linear-gradient(45deg, rgba(255,255,255,.22) 0 8px, transparent 8px 16px), rgba(212,165,60,.85); transform:translateX(-50%) rotate(-2deg); }
+  .pin {
+    position:absolute; top:-9px; left:50%; transform:translateX(-50%);
+    width:20px; height:20px; border-radius:9999px; z-index:3;
+    background: radial-gradient(circle at 35% 30%, #ff9d8a, #C65A43 70%);
+    box-shadow: 0 3px 5px rgba(0,0,0,.35);
+  }
+  .impact-meter { display:flex; gap:4px; align-items:center; }
+  .impact-seg { width:26px; height:8px; border-radius:4px; background:#E8DED2; }
+  .impact-seg.on-low { background:#4A7A4F; }
+  .impact-seg.on-med { background:#D4A53C; }
+  .impact-seg.on-high { background:#C65A43; }
+  .tab-btn.active { background:#2F5233; color:#FFF8F0; }
+  .tape-note { background:#FFF3C4; }
+  @media print { .no-print { display:none !important; } }
+</style>
+<script id="swapchef-ingredient-substitutions-lib">
+/* SwapChef — Ingredient Substitution Engine: pure logic library.
+   No DOM, no window, no localStorage here. Top-level function declarations only.
+   Data schema per entry: { n:name, a:aliases, u:unit label, s:[subs] }
+   Sub schema: { n:name, r:ratio display, f:factor (sub amount per 1 unit of original),
+                 i:impact note, l:low|medium|high, al:allergen tags, t:tip } */
+
+function getSwapDB() {
+  return [
+    { n: 'egg', a: ['eggs', 'large egg', 'large eggs'], u: '1 large egg', s: [
+      { n: 'ground flaxseed + water', r: '1 Tbsp ground flaxseed + 3 Tbsp water per egg', f: 1, i: 'Slightly denser, chewier crumb', l: 'medium', al: [], t: 'Whisk and rest 5 minutes until gelled. Great binder for muffins, pancakes and quick breads.' },
+      { n: 'unsweetened applesauce', r: '1/4 cup per egg', f: 1, i: 'Moister crumb, faint apple sweetness', l: 'medium', al: [], t: 'Reduce other sugar slightly. Works in cakes and brownies.' },
+      { n: 'mashed ripe banana', r: '1/2 banana (about 1/4 cup) per egg', f: 1, i: 'Denser crumb, distinct banana flavor', l: 'high', al: [], t: 'Best where banana flavor is welcome.' },
+      { n: 'plain yogurt', r: '1/4 cup per egg', f: 1, i: 'Tender, moist crumb', l: 'low', al: ['dairy'], t: 'Use in cakes and quick breads.' },
+      { n: 'commercial egg replacer', r: 'per packet directions (usually 1.5 tsp + 2 Tbsp water)', f: 1, i: 'Closest to a neutral result', l: 'low', al: [], t: 'Follow the brand packet ratio.' }
+    ]},
+    { n: 'butter', a: ['unsalted butter', 'salted butter'], u: '1 cup', s: [
+      { n: 'coconut oil', r: '1:1', f: 1, i: 'Slightly firmer texture, faint coconut aroma', l: 'low', al: [], t: 'Use refined coconut oil for a neutral flavor.' },
+      { n: 'olive oil', r: '3/4 cup per cup of butter', f: 0.75, i: 'Denser crumb, fruity note', l: 'medium', al: [], t: 'Best in savory bakes and rustic cakes.' },
+      { n: 'unsweetened applesauce', r: '1:1', f: 1, i: 'Lighter, cakier, less rich', l: 'medium', al: [], t: 'Halve it with oil for better texture in cakes.' },
+      { n: 'ghee', r: '1:1', f: 1, i: 'Nuttier, richer flavor', l: 'low', al: ['dairy'], t: 'Excellent for Indian sweets and tadka.' },
+      { n: 'margarine', r: '1:1', f: 1, i: 'Nearly identical in most recipes', l: 'low', al: ['dairy', 'soy'], t: 'Check the label — many margarines contain dairy or soy.' }
+    ]},
+    { n: 'milk', a: ['whole milk', 'dairy milk', 'cow milk'], u: '1 cup', s: [
+      { n: 'almond milk', r: '1:1', f: 1, i: 'Thinner body, faint nuttiness', l: 'low', al: ['tree-nut'], t: 'Choose unsweetened for savory cooking.' },
+      { n: 'oat milk', r: '1:1', f: 1, i: 'Creamy, mild', l: 'low', al: ['gluten'], t: 'Oats may carry gluten — use certified gluten-free if needed.' },
+      { n: 'soy milk', r: '1:1', f: 1, i: 'Rich, slightly beany', l: 'low', al: ['soy'], t: 'Highest protein of plant milks; curdles with acid like dairy.' },
+      { n: 'coconut milk (light)', r: '1:1', f: 1, i: 'Richer, coconut note', l: 'medium', al: ['tree-nut'], t: 'Shake well; great in curries and desserts.' },
+      { n: 'water', r: '1:1', f: 1, i: 'Thinner, less rich', l: 'medium', al: [], t: 'Add 1 Tbsp butter per cup for richness if you can.' }
+    ]},
+    { n: 'heavy cream', a: ['whipping cream', 'double cream'], u: '1 cup', s: [
+      { n: 'coconut cream', r: '1:1', f: 1, i: 'Rich, coconut flavor', l: 'medium', al: ['tree-nut'], t: 'Chill the can and use the thick top layer.' },
+      { n: 'Greek yogurt + milk', r: '3/4 cup yogurt + 1/4 cup milk per cup', f: 1, i: 'Tangier, slightly thinner', l: 'medium', al: ['dairy'], t: 'Do not boil — it can split.' },
+      { n: 'half-and-half + butter', r: '3/4 cup half-and-half + 1/4 cup melted butter', f: 1, i: 'Nearly identical in cooked sauces', l: 'low', al: ['dairy'], t: 'Will not whip; fine for sauces and soups.' }
+    ]},
+    { n: 'buttermilk', a: ['cultured buttermilk'], u: '1 cup', s: [
+      { n: 'milk + lemon juice', r: '1 Tbsp lemon juice + milk to make 1 cup; rest 10 min', f: 1, i: 'Nearly identical tang', l: 'low', al: ['dairy'], t: 'White vinegar works in place of lemon juice.' },
+      { n: 'plain yogurt + water', r: '3/4 cup yogurt + 1/4 cup water or milk', f: 1, i: 'Thicker, same tang', l: 'low', al: ['dairy'], t: 'Whisk smooth before measuring.' },
+      { n: 'kefir', r: '1:1', f: 1, i: 'Tangier, thinner', l: 'low', al: ['dairy'], t: 'Use plain, unsweetened kefir.' }
+    ]},
+    { n: 'sour cream', a: [], u: '1 cup', s: [
+      { n: 'Greek yogurt', r: '1:1', f: 1, i: 'Tangier, lighter', l: 'low', al: ['dairy'], t: 'Best 1:1 swap in dips and baking.' },
+      { n: 'plain yogurt', r: '1:1', f: 1, i: 'Thinner, tangier', l: 'medium', al: ['dairy'], t: 'Strain 30 minutes for thickness.' },
+      { n: 'cottage cheese, blended', r: '1:1, blended smooth', f: 1, i: 'Mild, slightly grainy if under-blended', l: 'medium', al: ['dairy'], t: 'Blend until completely smooth.' }
+    ]},
+    { n: 'cream cheese', a: [], u: '8 oz (1 block)', s: [
+      { n: 'Greek yogurt, strained', r: '1:1, strained overnight', f: 1, i: 'Tangier, lighter', l: 'medium', al: ['dairy'], t: 'Strain through cheesecloth 8+ hours.' },
+      { n: 'ricotta, blended', r: '1:1, blended smooth', f: 1, i: 'Milder, grainier', l: 'medium', al: ['dairy'], t: 'Add a pinch of salt and lemon.' },
+      { n: 'mascarpone', r: '1:1', f: 1, i: 'Richer, less tangy', l: 'low', al: ['dairy'], t: 'Add 1 tsp lemon juice for cheesecake tang.' }
+    ]},
+    { n: 'all-purpose flour', a: ['plain flour', 'maida', 'ap flour'], u: '1 cup', s: [
+      { n: 'whole wheat flour', r: '7/8 cup per cup of AP flour', f: 0.875, i: 'Denser, heartier, nuttier', l: 'high', al: ['gluten'], t: 'Add 2 tsp extra liquid per cup.' },
+      { n: 'bread flour', r: '1:1', f: 1, i: 'Chewier, more structure', l: 'medium', al: ['gluten'], t: 'Good for pizza and chewy cookies.' },
+      { n: 'oat flour', r: '1:1', f: 1, i: 'Tender, slightly crumbly', l: 'medium', al: ['gluten'], t: 'Blend rolled oats; use certified GF oats for gluten-free.' },
+      { n: 'gluten-free 1:1 blend', r: '1:1', f: 1, i: 'Slightly grittier crumb', l: 'medium', al: [], t: 'Use a blend that includes xanthan gum.' }
+    ]},
+    { n: 'cake flour', a: [], u: '1 cup', s: [
+      { n: 'AP flour + cornstarch', r: '3/4 cup AP flour + 2 Tbsp cornstarch, sifted', f: 1, i: 'Tender, fine crumb — very close', l: 'low', al: ['gluten'], t: 'Sift twice for the best texture.' }
+    ]},
+    { n: 'self-rising flour', a: ['self raising flour'], u: '1 cup', s: [
+      { n: 'AP flour + baking powder + salt', r: '1 cup AP flour + 1.5 tsp baking powder + 1/4 tsp salt', f: 1, i: 'Identical', l: 'low', al: ['gluten'], t: 'Mix well and use promptly.' }
+    ]},
+    { n: 'baking powder', a: [], u: '1 tsp', s: [
+      { n: 'baking soda + cream of tartar', r: '1/4 tsp baking soda + 1/2 tsp cream of tartar', f: 1, i: 'Identical lift', l: 'low', al: [], t: 'Single-acting — get the batter in the oven immediately.' },
+      { n: 'baking soda + buttermilk', r: '1/4 tsp baking soda + 1/2 cup buttermilk (reduce other liquid)', f: 1, i: 'Tender, tangy crumb', l: 'medium', al: ['dairy'], t: 'Reduce another liquid in the recipe by 1/2 cup.' }
+    ]},
+    { n: 'baking soda', a: ['bicarbonate of soda', 'sodium bicarbonate'], u: '1 tsp', s: [
+      { n: 'baking powder', r: '3 tsp per tsp of baking soda', f: 3, i: 'Less browning, milder flavor', l: 'medium', al: [], t: 'Triple the amount; cut back acidic ingredients slightly.' }
+    ]},
+    { n: 'active dry yeast', a: ['dry yeast', 'yeast'], u: '1 packet (2 1/4 tsp)', s: [
+      { n: 'instant yeast', r: '1:1', f: 1, i: 'Faster rise', l: 'low', al: [], t: 'Skip proofing; mix straight into the flour.' },
+      { n: 'fresh yeast', r: '0.6 oz (double the dry amount)', f: 2, i: 'Identical flavor', l: 'low', al: [], t: 'Crumble into lukewarm liquid.' }
+    ]},
+    { n: 'cornstarch', a: ['corn flour (US)'], u: '1 Tbsp', s: [
+      { n: 'all-purpose flour', r: '2 Tbsp per Tbsp of cornstarch', f: 2, i: 'Less glossy, slightly cloudy', l: 'medium', al: ['gluten'], t: 'Cook 2-3 minutes longer to remove the raw taste.' },
+      { n: 'arrowroot', r: '1:1', f: 1, i: 'Glossier, clearer', l: 'low', al: [], t: 'Do not overcook — it thins with prolonged heat.' },
+      { n: 'tapioca starch', r: '1:1', f: 1, i: 'Glossy, slightly stretchy', l: 'low', al: [], t: 'Great for fruit pies.' }
+    ]},
+    { n: 'white sugar', a: ['granulated sugar', 'sugar'], u: '1 cup', s: [
+      { n: 'brown sugar', r: '1:1', f: 1, i: 'Moister, caramel note, darker color', l: 'medium', al: [], t: 'Pack it firmly when measuring.' },
+      { n: 'honey', r: '3/4 cup per cup + reduce other liquid by 1/4 cup', f: 0.75, i: 'Moister, floral, browns faster', l: 'medium', al: [], t: 'Lower oven temp by 25°F to prevent over-browning.' },
+      { n: 'maple syrup', r: '3/4 cup per cup + reduce other liquid by 3 Tbsp', f: 0.75, i: 'Maple note, moister', l: 'medium', al: [], t: 'Reduce another liquid slightly.' },
+      { n: 'coconut sugar', r: '1:1', f: 1, i: 'Caramel-like, darker crumb', l: 'low', al: [], t: 'Dissolves slower — good in cookies.' }
+    ]},
+    { n: 'brown sugar', a: ['light brown sugar', 'dark brown sugar'], u: '1 cup', s: [
+      { n: 'white sugar + molasses', r: '1 cup white sugar + 1 Tbsp molasses', f: 1, i: 'Identical', l: 'low', al: [], t: 'Mix well; use 2 Tbsp molasses for dark brown sugar.' }
+    ]},
+    { n: 'powdered sugar', a: ['confectioners sugar', 'icing sugar'], u: '1 cup', s: [
+      { n: 'white sugar + cornstarch, blended', r: '1 cup white sugar + 1 Tbsp cornstarch, blitzed', f: 1, i: 'Identical', l: 'low', al: [], t: 'Blend 60 seconds until powdery, then sift.' }
+    ]},
+    { n: 'honey', a: [], u: '1 cup', s: [
+      { n: 'maple syrup', r: '1:1', f: 1, i: 'Maple instead of floral', l: 'low', al: [], t: 'Same sweetness, thinner pour.' },
+      { n: 'agave nectar', r: '1:1', f: 1, i: 'Milder, a touch sweeter', l: 'low', al: [], t: 'Slightly sweeter — you can use a touch less.' },
+      { n: 'golden syrup', r: '1:1', f: 1, i: 'Buttery caramel note', l: 'low', al: [], t: 'Classic in British baking.' }
+    ]},
+    { n: 'molasses', a: ['treacle'], u: '1 cup', s: [
+      { n: 'dark corn syrup', r: '1:1', f: 1, i: 'Lighter color, milder', l: 'medium', al: [], t: 'Add 1 Tbsp brown sugar for depth.' },
+      { n: 'maple syrup + brown sugar', r: '3/4 cup maple syrup + 1/4 cup brown sugar', f: 1, i: 'Close in gingerbreads', l: 'medium', al: [], t: 'Best for spiced bakes.' }
+    ]},
+    { n: 'maple syrup', a: [], u: '1 cup', s: [
+      { n: 'honey', r: '1:1', f: 1, i: 'Floral instead of woody', l: 'low', al: [], t: 'Honey is thicker — warm it to pour.' },
+      { n: 'agave nectar', r: '1:1', f: 1, i: 'Neutral sweetness', l: 'low', al: [], t: 'Nearly 1:1 in glazes.' }
+    ]},
+    { n: 'cocoa powder', a: ['unsweetened cocoa', 'cacao powder'], u: '1/4 cup', s: [
+      { n: 'unsweetened chocolate', r: '1 oz chocolate + reduce fat by 1 Tbsp, per 1/4 cup cocoa', f: 1, i: 'Richer, fudgier', l: 'medium', al: ['dairy', 'soy'], t: 'Melt and cool slightly before adding to batter.' }
+    ]},
+    { n: 'chocolate chips', a: ['choc chips', 'semi-sweet chips'], u: '1 cup', s: [
+      { n: 'chopped chocolate bar', r: '1:1 by weight (about 6 oz)', f: 1, i: 'Melts smoother, melty pools', l: 'low', al: ['dairy', 'soy'], t: 'Chop roughly for bakery-style pools.' },
+      { n: 'cocoa + butter + sugar', r: '3 Tbsp cocoa + 3 Tbsp butter + 3 Tbsp sugar per oz of chips', f: 1, i: 'Less snap, fudgier', l: 'medium', al: ['dairy'], t: 'Melt together for a ganache-style mix-in.' }
+    ]},
+    { n: 'unsweetened chocolate', a: ['baking chocolate'], u: '1 oz', s: [
+      { n: 'cocoa powder + butter', r: '3 Tbsp cocoa + 1 Tbsp butter or oil per oz', f: 1, i: 'Nearly identical in baking', l: 'low', al: ['dairy'], t: 'Use oil instead of butter for dairy-free.' }
+    ]},
+    { n: 'vanilla extract', a: ['vanilla essence', 'vanilla'], u: '1 tsp', s: [
+      { n: 'almond extract', r: '1/2 tsp per tsp of vanilla', f: 0.5, i: 'Stronger, nuttier', l: 'medium', al: ['tree-nut'], t: 'Halve the amount — it is potent.' },
+      { n: 'maple syrup', r: '1 tsp per tsp of vanilla', f: 1, i: 'Adds a maple note', l: 'medium', al: [], t: 'Fine in pancakes, muffins and frostings.' },
+      { n: 'vanilla bean', r: '1/2 bean, scraped, per tsp', f: 1, i: 'More intense, speckled', l: 'low', al: [], t: 'Simmer the pod in the liquid to extract more.' }
+    ]},
+    { n: 'vegetable oil', a: ['cooking oil', 'canola oil'], u: '1 cup', s: [
+      { n: 'melted butter', r: '1:1', f: 1, i: 'Richer flavor', l: 'low', al: ['dairy'], t: 'Let cool slightly before mixing with eggs.' },
+      { n: 'coconut oil, melted', r: '1:1', f: 1, i: 'Faint coconut note', l: 'low', al: [], t: 'Refined coconut oil is neutral.' },
+      { n: 'unsweetened applesauce', r: '1:1', f: 1, i: 'Lighter, less rich, cakier', l: 'medium', al: [], t: 'Baking only; halving with oil gives better texture.' }
+    ]},
+    { n: 'olive oil', a: ['extra virgin olive oil'], u: '1 cup', s: [
+      { n: 'avocado oil', r: '1:1', f: 1, i: 'Neutral, higher smoke point', l: 'low', al: [], t: 'Better for high-heat searing.' },
+      { n: 'canola oil', r: '1:1', f: 1, i: 'Neutral', l: 'low', al: [], t: 'Budget-friendly neutral swap.' },
+      { n: 'melted butter', r: '1:1', f: 1, i: 'Richer, less fruity', l: 'low', al: ['dairy'], t: 'Good in savory bakes and sautes.' }
+    ]},
+    { n: 'coconut oil', a: [], u: '1 cup', s: [
+      { n: 'butter', r: '1:1', f: 1, i: 'Creamier flavor', l: 'low', al: ['dairy'], t: 'Solid at room temp, like coconut oil.' },
+      { n: 'vegetable shortening', r: '1:1', f: 1, i: 'Neutral', l: 'low', al: [], t: 'Great for flaky pie crusts.' }
+    ]},
+    { n: 'shortening', a: ['vegetable shortening', 'crisco'], u: '1 cup', s: [
+      { n: 'butter', r: '1 cup + 2 Tbsp per cup (shortening has no water)', f: 1.125, i: 'Better flavor, slightly less tender', l: 'low', al: ['dairy'], t: 'Reduce salt by 1/4 tsp if using salted butter.' },
+      { n: 'coconut oil', r: '1:1', f: 1, i: 'Similar flakiness', l: 'low', al: [], t: 'Chill it well for pie dough.' }
+    ]},
+    { n: 'lemon juice', a: ['fresh lemon juice'], u: '1 Tbsp', s: [
+      { n: 'lime juice', r: '1:1', f: 1, i: 'Slightly more aromatic', l: 'low', al: [], t: 'Nearly interchangeable.' },
+      { n: 'white vinegar', r: '1/2 Tbsp per Tbsp of lemon juice', f: 0.5, i: 'Sharper, no citrus note', l: 'medium', al: [], t: 'Use half the amount.' },
+      { n: 'white wine', r: '2 Tbsp per Tbsp of lemon juice', f: 2, i: 'Milder acidity', l: 'medium', al: [], t: 'For deglazing and marinades.' }
+    ]},
+    { n: 'lime juice', a: ['fresh lime juice'], u: '1 Tbsp', s: [
+      { n: 'lemon juice', r: '1:1', f: 1, i: 'Slightly less floral', l: 'low', al: [], t: '1:1 in most recipes.' }
+    ]},
+    { n: 'white vinegar', a: ['distilled vinegar', 'distilled white vinegar'], u: '1 cup', s: [
+      { n: 'apple cider vinegar', r: '1:1', f: 1, i: 'Fruitier, slightly sweeter', l: 'low', al: [], t: 'Colors light pickles slightly.' },
+      { n: 'lemon juice', r: '1:1', f: 1, i: 'Citrusy', l: 'low', al: [], t: 'Good in dressings.' },
+      { n: 'rice vinegar + sugar', r: '1:1 + a pinch of sugar', f: 1, i: 'Milder, sweeter', l: 'low', al: [], t: 'Add a pinch of sugar to match acidity.' }
+    ]},
+    { n: 'apple cider vinegar', a: ['acv'], u: '1 cup', s: [
+      { n: 'white vinegar', r: '1:1', f: 1, i: 'Cleaner, sharper', l: 'low', al: [], t: 'Add 1 tsp honey per cup for the fruity note.' },
+      { n: 'lemon juice', r: '1:1', f: 1, i: 'Brighter', l: 'low', al: [], t: 'Best in dressings, not pickling.' }
+    ]},
+    { n: 'balsamic vinegar', a: ['balsamic'], u: '1 Tbsp', s: [
+      { n: 'red wine vinegar + sugar', r: '1 Tbsp red wine vinegar + 1/2 tsp sugar', f: 1, i: 'Less syrupy, less sweet', l: 'medium', al: [], t: 'Simmer to thicken for glazes.' }
+    ]},
+    { n: 'red wine vinegar', a: [], u: '1 Tbsp', s: [
+      { n: 'white vinegar + red wine', r: '1/2 Tbsp white vinegar + 1/2 Tbsp red wine', f: 1, i: 'Close enough for dressings', l: 'low', al: [], t: 'Or just white vinegar 1:1 in a pinch.' },
+      { n: 'lemon juice', r: '1:1', f: 1, i: 'Brighter, fruitier', l: 'low', al: [], t: 'Fine for vinaigrettes.' }
+    ]},
+    { n: 'tomato paste', a: [], u: '1 Tbsp', s: [
+      { n: 'tomato sauce, reduced', r: '3 Tbsp sauce simmered down to 1 Tbsp', f: 1, i: 'Slightly less intense', l: 'low', al: [], t: 'Simmer until thick and dark.' },
+      { n: 'ketchup', r: '1:1', f: 1, i: 'Sweeter, vinegary', l: 'medium', al: [], t: 'Reduce added sugar elsewhere.' }
+    ]},
+    { n: 'tomato sauce', a: ['passata'], u: '1 cup', s: [
+      { n: 'tomato paste + water', r: '1/3 cup paste + 2/3 cup water', f: 1, i: 'Nearly identical', l: 'low', al: [], t: 'Season with salt and basil.' },
+      { n: 'crushed tomatoes, blended', r: '1:1, blended smooth', f: 1, i: 'Fresher, chunkier', l: 'low', al: [], t: 'Simmer 10 minutes to mellow.' }
+    ]},
+    { n: 'crushed tomatoes', a: [], u: '1 can (28 oz)', s: [
+      { n: 'diced tomatoes, blended', r: '1:1, pulsed', f: 1, i: 'Nearly identical', l: 'low', al: [], t: 'Pulse, do not puree, to keep texture.' },
+      { n: 'whole peeled tomatoes, crushed', r: '1:1, crushed by hand', f: 1, i: 'Fresher flavor', l: 'low', al: [], t: 'Crush with hands or a potato masher.' }
+    ]},
+    { n: 'ketchup', a: ['tomato ketchup'], u: '1 cup', s: [
+      { n: 'tomato paste + vinegar + sugar', r: '1 cup paste + 2 Tbsp vinegar + 2 Tbsp sugar + salt', f: 1, i: 'Fresher, less smooth', l: 'medium', al: [], t: 'Simmer 10 minutes and blend.' }
+    ]},
+    { n: 'dijon mustard', a: ['mustard'], u: '1 Tbsp', s: [
+      { n: 'dry mustard + water', r: '1 tsp dry mustard + 1 tsp water, rested 10 min', f: 1, i: 'Sharper, hotter', l: 'medium', al: [], t: 'Let it bloom 10 minutes.' },
+      { n: 'yellow mustard', r: '1:1', f: 1, i: 'Milder, more vinegary', l: 'low', al: [], t: 'Fine in dressings and marinades.' }
+    ]},
+    { n: 'mayonnaise', a: ['mayo'], u: '1 cup', s: [
+      { n: 'Greek yogurt', r: '1:1', f: 1, i: 'Tangier, lighter', l: 'medium', al: ['dairy'], t: 'Best for salads and dips, not heated sauces.' },
+      { n: 'mashed avocado', r: '1:1', f: 1, i: 'Green, buttery, earthy', l: 'medium', al: [], t: 'Add lemon juice to prevent browning.' }
+    ]},
+    { n: 'plain yogurt', a: ['yogurt', 'curd', 'dahi'], u: '1 cup', s: [
+      { n: 'sour cream', r: '1:1', f: 1, i: 'Richer, tangier', l: 'low', al: ['dairy'], t: '1:1 in baking and dips.' },
+      { n: 'buttermilk', r: '1:1', f: 1, i: 'Thinner', l: 'low', al: ['dairy'], t: 'Reduce other liquids slightly in batters.' },
+      { n: 'kefir', r: '1:1', f: 1, i: 'Drinkable thin, tangy', l: 'low', al: ['dairy'], t: 'Great in smoothies and marinades.' }
+    ]},
+    { n: 'ricotta', a: ['ricotta cheese'], u: '1 cup', s: [
+      { n: 'cottage cheese, blended', r: '1:1, blended smooth', f: 1, i: 'Nearly identical in lasagna', l: 'low', al: ['dairy'], t: 'Blend until silky; drain excess whey.' },
+      { n: 'cream cheese, thinned', r: '3/4 cup cream cheese + 1/4 cup milk', f: 1, i: 'Richer, denser', l: 'medium', al: ['dairy'], t: 'For dips and fillings.' }
+    ]},
+    { n: 'parmesan', a: ['parmesan cheese', 'parmigiano'], u: '1/2 cup grated', s: [
+      { n: 'pecorino romano', r: '1:1', f: 1, i: 'Saltier, sharper', l: 'low', al: ['dairy'], t: 'Reduce added salt slightly.' },
+      { n: 'nutritional yeast', r: '1:1', f: 1, i: 'Nutty, cheesy-ish — will not melt', l: 'high', al: [], t: 'Dairy-free; best as a topping, not for melting.' }
+    ]},
+    { n: 'cheddar', a: ['cheddar cheese'], u: '1 cup shredded', s: [
+      { n: 'Monterey Jack', r: '1:1', f: 1, i: 'Milder, melts better', l: 'low', al: ['dairy'], t: 'Great for quesadillas and sauces.' },
+      { n: 'Colby', r: '1:1', f: 1, i: 'Milder, softer', l: 'low', al: ['dairy'], t: 'Nearly a twin of cheddar.' }
+    ]},
+    { n: 'half-and-half', a: ['half and half'], u: '1 cup', s: [
+      { n: 'milk + cream', r: '3/4 cup milk + 1/4 cup cream', f: 1, i: 'Identical', l: 'low', al: ['dairy'], t: 'Stir well.' },
+      { n: 'whole milk + butter', r: '7/8 cup milk + 1.5 Tbsp melted butter', f: 1, i: 'Close in coffee and sauces', l: 'low', al: ['dairy'], t: 'Whisk the butter in well.' }
+    ]},
+    { n: 'evaporated milk', a: [], u: '1 cup', s: [
+      { n: 'fresh milk, simmered', r: '2 1/2 cups milk simmered down to 1 cup', f: 1, i: 'Identical', l: 'low', al: ['dairy'], t: 'Simmer gently; do not boil.' },
+      { n: 'half-and-half', r: '1:1', f: 1, i: 'Richer', l: 'low', al: ['dairy'], t: 'Fine in most cooked recipes.' }
+    ]},
+    { n: 'sweetened condensed milk', a: ['condensed milk'], u: '1 can (14 oz)', s: [
+      { n: 'milk + sugar, simmered', r: '1 1/2 cups milk + 3/4 cup sugar simmered to 14 oz', f: 1, i: 'Identical', l: 'low', al: ['dairy'], t: 'Stir constantly; takes about 30 minutes.' },
+      { n: 'coconut condensed milk', r: '1:1', f: 1, i: 'Coconut note', l: 'medium', al: ['tree-nut'], t: 'Dairy-free; sold canned or homemade.' }
+    ]},
+    { n: 'coconut milk', a: [], u: '1 cup', s: [
+      { n: 'heavy cream', r: '1:1', f: 1, i: 'No coconut flavor, richer', l: 'medium', al: ['dairy'], t: 'Best for savory curries and soups.' },
+      { n: 'almond milk + coconut extract', r: '1 cup + 1/4 tsp coconut extract', f: 1, i: 'Lighter, coconut hint', l: 'medium', al: ['tree-nut'], t: 'For desserts and smoothies.' }
+    ]},
+    { n: 'soy sauce', a: [], u: '1 Tbsp', s: [
+      { n: 'tamari', r: '1:1', f: 1, i: 'Richer, smoother', l: 'low', al: ['soy'], t: 'Gluten-free by default — check the label.' },
+      { n: 'coconut aminos', r: '1:1', f: 1, i: 'Sweeter, milder', l: 'low', al: [], t: 'Soy-free and gluten-free.' },
+      { n: 'Worcestershire + water', r: '2 tsp Worcestershire + 1 tsp water', f: 1, i: 'Tangier, complex', l: 'medium', al: ['fish'], t: 'In a pinch for marinades.' }
+    ]},
+    { n: 'fish sauce', a: [], u: '1 Tbsp', s: [
+      { n: 'soy sauce + lime', r: '1 Tbsp soy sauce + 1/2 tsp lime juice', f: 1, i: 'Less funky, still savory', l: 'medium', al: ['soy'], t: 'Add a minced anchovy for depth.' },
+      { n: 'anchovy paste', r: '1/2 tsp paste + 1 tsp water', f: 1, i: 'Fishier, saltier', l: 'medium', al: ['fish'], t: 'Mash into dressings and sauces.' }
+    ]},
+    { n: 'Worcestershire sauce', a: ['worcestershire'], u: '1 Tbsp', s: [
+      { n: 'soy sauce + vinegar + sugar', r: '2 tsp soy sauce + 1 tsp vinegar + pinch of sugar', f: 1, i: 'Close in cooked dishes', l: 'low', al: ['soy'], t: 'Add a dash of hot sauce for complexity.' },
+      { n: 'tamari + lemon', r: '2 tsp tamari + 1 tsp lemon juice', f: 1, i: 'Cleaner, brighter', l: 'low', al: ['soy'], t: 'Gluten-free option.' }
+    ]},
+    { n: 'oyster sauce', a: [], u: '1 Tbsp', s: [
+      { n: 'soy sauce + sugar, simmered', r: '2 tsp soy sauce + 1 tsp sugar, simmered', f: 1, i: 'Thinner, less rich', l: 'medium', al: ['soy'], t: 'Thicken with a cornstarch slurry.' },
+      { n: 'hoisin sauce', r: '1:1', f: 1, i: 'Sweeter, spicier', l: 'medium', al: ['soy', 'peanut'], t: 'Use a touch less; hoisin is bolder.' }
+    ]},
+    { n: 'hoisin sauce', a: ['hoisin'], u: '1 Tbsp', s: [
+      { n: 'soy + peanut butter + sugar + vinegar', r: '2 tsp soy + 1 tsp peanut butter + 1 tsp sugar + 1/2 tsp vinegar', f: 1, i: 'Very close homemade version', l: 'low', al: ['soy', 'peanut'], t: 'Whisk smooth; thin with water.' },
+      { n: 'oyster sauce + sugar', r: '1 Tbsp oyster sauce + 1/2 tsp sugar', f: 1, i: 'Less sweet, more savory', l: 'medium', al: ['soy'], t: 'For glazes and stir-fries.' }
+    ]},
+    { n: 'miso paste', a: ['miso'], u: '1 Tbsp', s: [
+      { n: 'soy sauce', r: '1 Tbsp (thinner — reduce other liquid)', f: 1, i: 'Saltier, thinner, less funk', l: 'medium', al: ['soy'], t: 'Reduce other salty liquids.' },
+      { n: 'tahini + soy sauce', r: '1 tsp tahini + 2 tsp soy sauce', f: 1, i: 'Nutty, close in dressings', l: 'medium', al: ['soy', 'sesame'], t: 'Whisk until smooth.' }
+    ]},
+    { n: 'tahini', a: [], u: '1/4 cup', s: [
+      { n: 'peanut butter, thinned', r: '1:1 + 1 Tbsp water', f: 1, i: 'Sweeter, peanutty', l: 'medium', al: ['peanut'], t: 'Natural, unsweetened peanut butter works best.' },
+      { n: 'almond butter', r: '1:1', f: 1, i: 'Milder, sweeter', l: 'low', al: ['tree-nut'], t: 'Thin with warm water for dressings.' },
+      { n: 'sunflower seed butter', r: '1:1', f: 1, i: 'Earthy, nut-free', l: 'low', al: [], t: 'Nut-free; can turn green with baking soda — harmless.' }
+    ]},
+    { n: 'peanut butter', a: [], u: '1/2 cup', s: [
+      { n: 'almond butter', r: '1:1', f: 1, i: 'Milder, pricier', l: 'low', al: ['tree-nut'], t: 'Stir well — natural separation.' },
+      { n: 'sunflower seed butter', r: '1:1', f: 1, i: 'Earthy, nut-free', l: 'low', al: [], t: 'Safe for nut-free schools.' },
+      { n: 'tahini + honey', r: '1/2 cup tahini + 1 Tbsp honey', f: 1, i: 'Less sweet, sesame note', l: 'medium', al: ['sesame'], t: 'For sauces and dressings.' }
+    ]},
+    { n: 'fresh herbs', a: ['fresh basil', 'fresh parsley', 'fresh cilantro'], u: '1 Tbsp chopped', s: [
+      { n: 'dried herbs', r: '1 tsp per Tbsp fresh (the 3:1 rule)', f: 0.3333, i: 'More concentrated, less bright', l: 'medium', al: [], t: 'Classic 3:1 fresh-to-dried ratio. Add dried herbs earlier in cooking.' },
+      { n: 'herb paste (tube)', r: '1 tsp per Tbsp fresh', f: 0.3333, i: 'Close to fresh', l: 'low', al: [], t: 'Refrigerate after opening.' }
+    ]},
+    { n: 'garlic clove', a: ['garlic', 'clove of garlic', 'garlic cloves'], u: '1 clove', s: [
+      { n: 'garlic powder', r: '1/8 tsp per clove', f: 0.125, i: 'Milder, no bite', l: 'medium', al: [], t: 'Add earlier in cooking — powder burns fast.' },
+      { n: 'garlic salt', r: '1/2 tsp per clove (cut other salt)', f: 0.5, i: 'Saltier overall', l: 'medium', al: [], t: 'Reduce recipe salt by 1/2 tsp per clove replaced.' },
+      { n: 'jarred minced garlic', r: '1/2 tsp per clove', f: 0.5, i: 'Milder, slightly acidic', l: 'low', al: [], t: 'Convenient and close enough.' }
+    ]},
+    { n: 'fresh ginger', a: ['ginger', 'ginger root'], u: '1 Tbsp grated', s: [
+      { n: 'ground ginger', r: '1/4 tsp per Tbsp fresh', f: 0.25, i: 'Warmer, less bright', l: 'medium', al: [], t: '4:1 fresh-to-ground ratio.' },
+      { n: 'ginger paste', r: '1 Tbsp per Tbsp fresh', f: 1, i: 'Nearly identical', l: 'low', al: [], t: 'Tube paste keeps for weeks refrigerated.' }
+    ]},
+    { n: 'onion', a: ['yellow onion', 'medium onion'], u: '1 medium onion', s: [
+      { n: 'onion powder', r: '1 tsp per medium onion', f: 1, i: 'No texture, flat sweetness', l: 'high', al: [], t: 'Best in spice rubs and soups, not salads.' },
+      { n: 'dried minced onion', r: '1/4 cup per medium onion', f: 1, i: 'Chewy bits, milder', l: 'medium', al: [], t: 'Rehydrate 15 minutes in warm water.' },
+      { n: 'shallots', r: '3 shallots per onion', f: 1, i: 'Milder, sweeter', l: 'low', al: [], t: 'Elegant in vinaigrettes.' }
+    ]},
+    { n: 'shallot', a: ['shallots'], u: '1 shallot', s: [
+      { n: 'onion + garlic', r: '1/4 onion + 1 small garlic clove', f: 1, i: 'Sharper', l: 'medium', al: [], t: 'Mince very fine.' },
+      { n: 'red onion', r: '1:1', f: 1, i: 'Stronger, colorful', l: 'low', al: [], t: 'Soak in ice water 10 minutes to mellow.' }
+    ]},
+    { n: 'breadcrumbs', a: ['bread crumbs'], u: '1 cup', s: [
+      { n: 'panko', r: '1:1', f: 1, i: 'Crispier, airier', l: 'low', al: ['gluten'], t: 'Best for frying.' },
+      { n: 'crushed crackers', r: '1:1', f: 1, i: 'Buttery, salty', l: 'low', al: ['gluten', 'dairy'], t: 'Reduce added salt.' },
+      { n: 'rolled oats, pulsed', r: '1:1, pulsed fine', f: 1, i: 'Heartier, chewier', l: 'medium', al: ['gluten'], t: 'Great binder for meatloaf.' }
+    ]},
+    { n: 'rolled oats', a: ['oats', 'old-fashioned oats'], u: '1 cup', s: [
+      { n: 'quick oats', r: '1:1', f: 1, i: 'Softer, less chewy', l: 'low', al: ['gluten'], t: 'Reduce cooking time.' },
+      { n: 'quinoa flakes', r: '1:1', f: 1, i: 'Nuttier, protein-rich', l: 'medium', al: [], t: 'Gluten-free option.' }
+    ]},
+    { n: 'white rice', a: ['rice', 'long-grain rice'], u: '1 cup uncooked', s: [
+      { n: 'quinoa', r: '1:1 (rinse first)', f: 1, i: 'Nuttier, more protein', l: 'medium', al: [], t: 'Rinse to remove bitterness; use a 2:1 water ratio.' },
+      { n: 'couscous', r: '1:1', f: 1, i: 'Fluffier, faster', l: 'low', al: ['gluten'], t: 'Just add boiling water and cover 5 minutes.' },
+      { n: 'orzo', r: '1:1', f: 1, i: 'Pasta-like, tender', l: 'low', al: ['gluten'], t: 'Toast first for pilaf-style.' }
+    ]},
+    { n: 'chicken broth', a: ['chicken stock'], u: '1 cup', s: [
+      { n: 'vegetable broth', r: '1:1', f: 1, i: 'Lighter, vegetarian', l: 'low', al: [], t: 'Simmer a parmesan rind in it for depth.' },
+      { n: 'water + bouillon', r: '1 cup water + 1 cube or 1 tsp granules', f: 1, i: 'Saltier — taste first', l: 'low', al: [], t: 'Use low-sodium to control salt.' },
+      { n: 'white wine + water', r: '1/2 cup wine + 1/2 cup water', f: 1, i: 'Brighter, aromatic', l: 'medium', al: [], t: 'For risottos and pan sauces.' }
+    ]},
+    { n: 'red wine', a: ['dry red wine', 'cooking wine'], u: '1 cup', s: [
+      { n: 'beef broth + vinegar', r: '1 cup broth + 1 Tbsp vinegar', f: 1, i: 'Less complex, still rich', l: 'medium', al: [], t: 'Alcohol-free option for braises.' },
+      { n: 'grape juice + vinegar', r: '3/4 cup juice + 1 Tbsp vinegar', f: 1, i: 'Sweeter, fruitier', l: 'medium', al: [], t: 'Reduce added sugar elsewhere.' },
+      { n: 'cranberry juice', r: '1:1', f: 1, i: 'Tart, deep color', l: 'medium', al: [], t: 'Great in glazes and reductions.' }
+    ]},
+    { n: 'rum', a: ['dark rum'], u: '1 Tbsp', s: [
+      { n: 'vanilla extract + water', r: '1 tsp vanilla + 2 tsp water', f: 1, i: 'No boozy warmth', l: 'medium', al: [], t: 'Alcohol-free.' },
+      { n: 'apple juice', r: '1:1', f: 1, i: 'Fruity, mild', l: 'low', al: [], t: 'For cakes and glazes.' }
+    ]},
+    { n: 'espresso', a: ['shot of espresso'], u: '1 shot', s: [
+      { n: 'strong brewed coffee', r: '1/2 cup per shot', f: 1, i: 'Milder', l: 'low', al: [], t: 'Double-brew for intensity.' },
+      { n: 'instant espresso powder', r: '2 tsp powder + 2 oz hot water', f: 1, i: 'Nearly identical', l: 'low', al: [], t: 'Dissolve fully.' }
+    ]},
+    { n: 'black pepper', a: ['pepper', 'ground pepper'], u: '1 tsp', s: [
+      { n: 'white pepper', r: '1:1', f: 1, i: 'Earthier, no black specks', l: 'low', al: [], t: 'For light-colored sauces.' },
+      { n: 'cayenne', r: '1/4 tsp per tsp of pepper', f: 0.25, i: 'Much hotter, no pepper flavor', l: 'high', al: [], t: 'Use sparingly — much hotter.' }
+    ]},
+    { n: 'cinnamon', a: ['ground cinnamon'], u: '1 tsp', s: [
+      { n: 'pumpkin pie spice', r: '1:1', f: 1, i: 'Adds nutmeg and clove notes', l: 'medium', al: [], t: 'Reduce other warm spices.' },
+      { n: 'nutmeg + allspice', r: '1/2 tsp nutmeg + 1/2 tsp allspice', f: 1, i: 'Warmer, deeper', l: 'medium', al: [], t: 'Nutmeg is strong — measure carefully.' }
+    ]},
+    { n: 'salt', a: ['table salt'], u: '1 tsp', s: [
+      { n: 'soy sauce', r: '1 Tbsp per tsp of salt (cut other liquid)', f: 1, i: 'Adds umami, darker color', l: 'medium', al: ['soy'], t: 'Reduce another liquid by 1 Tbsp.' },
+      { n: 'sea salt / kosher salt', r: '1:1 by weight (flakes: use more by volume)', f: 1, i: 'Cleaner flavor', l: 'low', al: [], t: 'Diamond Crystal is less dense — use about 1.5x by volume.' }
+    ]},
+    { n: 'fresh basil', a: ['basil'], u: '1/4 cup', s: [
+      { n: 'dried basil', r: '1 Tbsp per 1/4 cup fresh (3:1 rule)', f: 0.3333, i: 'Less bright, more minty', l: 'medium', al: [], t: 'Add dried early; stir fresh in at the end.' },
+      { n: 'fresh spinach + mint', r: '1/4 cup spinach + 1 tsp mint', f: 1, i: 'Green bulk, milder', l: 'high', al: [], t: 'For pesto emergencies only.' }
+    ]},
+    { n: 'pine nuts', a: ['pignoli'], u: '1/4 cup', s: [
+      { n: 'walnuts, toasted', r: '1:1', f: 1, i: 'Stronger, slightly bitter', l: 'medium', al: ['tree-nut'], t: 'Toast to mellow bitterness.' },
+      { n: 'sunflower seeds, toasted', r: '1:1', f: 1, i: 'Nutty, nut-free', l: 'low', al: [], t: 'Budget-friendly pesto.' }
+    ]}
+  ];
+}
+
+function allergenList() {
+  return [
+    { id: 'dairy', label: 'Dairy / Milk' },
+    { id: 'egg', label: 'Egg' },
+    { id: 'gluten', label: 'Gluten / Wheat' },
+    { id: 'peanut', label: 'Peanut' },
+    { id: 'tree-nut', label: 'Tree nuts' },
+    { id: 'soy', label: 'Soy' },
+    { id: 'fish', label: 'Fish' },
+    { id: 'shellfish', label: 'Shellfish' },
+    { id: 'sesame', label: 'Sesame' }
+  ];
+}
+
+function normalizeName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[-_]/g, ' ')
+    .replace(/[^a-z0-9\s\/.]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseAmount(s) {
+  s = String(s || '').trim();
+  var m = s.match(/^(\d+)\s+(\d+)\s*\/\s*(\d+)$/);
+  if (m) return parseInt(m[1], 10) + parseInt(m[2], 10) / parseInt(m[3], 10);
+  m = s.match(/^(\d+)\s*\/\s*(\d+)$/);
+  if (m) {
+    var d = parseInt(m[2], 10);
+    return d === 0 ? null : parseInt(m[1], 10) / d;
+  }
+  var v = parseFloat(s);
+  return isNaN(v) ? null : v;
+}
+
+var KNOWN_UNITS = {
+  cup: 'cup', cups: 'cup', c: 'cup',
+  tbsp: 'tbsp', tablespoon: 'tbsp', tablespoons: 'tbsp', tbs: 'tbsp',
+  tsp: 'tsp', teaspoon: 'tsp', teaspoons: 'tsp',
+  oz: 'oz', ounce: 'oz', ounces: 'oz', fl: 'fl oz',
+  g: 'g', gram: 'g', grams: 'g', kg: 'kg', kilo: 'kg',
+  ml: 'ml', l: 'l', liter: 'l', liters: 'l', litre: 'l',
+  lb: 'lb', lbs: 'lb', pound: 'lb', pounds: 'lb',
+  clove: 'clove', cloves: 'clove',
+  pinch: 'pinch', pinches: 'pinch', dash: 'dash', dashes: 'dash',
+  can: 'can', cans: 'can', slice: 'slice', slices: 'slice',
+  stalk: 'stalk', stalks: 'stalk', bunch: 'bunch', bunches: 'bunch',
+  packet: 'packet', packets: 'packet', scoop: 'scoop', scoops: 'scoop',
+  piece: 'piece', pieces: 'piece', stick: 'stick', sticks: 'stick',
+  sprig: 'sprig', sprigs: 'sprig'
+};
+
+function isUnit(w) {
+  return Object.prototype.hasOwnProperty.call(KNOWN_UNITS, String(w || '').toLowerCase());
+}
+
+function normalizeUnit(w) {
+  var k = String(w || '').toLowerCase();
+  return KNOWN_UNITS[k] || k;
+}
+
+function parseRecipeLine(line) {
+  var raw = String(line || '').trim();
+  if (!raw) return null;
+  var qty = null, unit = '', name = raw;
+  var m = raw.match(/^\s*((?:\d+\s+)?\d+\s*\/\s*\d+|\d*\.\d+|\d+)\s*(.*)$/);
+  if (m) {
+    qty = parseAmount(m[1]);
+    var rest = m[2].replace(/^-\s*(?:(?:\d+\s+)?\d+\s*\/\s*\d+|\d*\.\d+|\d+)/, '').trim();
+    var words = rest.split(/\s+/);
+    if (words.length > 1 && isUnit(words[0])) {
+      unit = normalizeUnit(words[0]);
+      name = words.slice(1).join(' ');
+    } else {
+      name = rest;
+    }
+  }
+  name = name.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+  name = name.replace(/^(of|a|an)\s+/i, '').trim();
+  return { line: raw, qty: qty, unit: unit, name: name };
+}
+
+function findIngredient(query) {
+  var q = normalizeName(query);
+  if (!q) return null;
+  var db = getSwapDB();
+  var best = null, bestScore = 0;
+  for (var i = 0; i < db.length; i++) {
+    var e = db[i];
+    var names = [e.n].concat(e.a || []);
+    for (var j = 0; j < names.length; j++) {
+      var n = normalizeName(names[j]);
+      if (!n) continue;
+      if (q === n) return e;
+      var score = 0;
+      if (q.indexOf(n) !== -1) score = n.length * 2;
+      else if (n.indexOf(q) !== -1 && q.length >= 4) score = q.length;
+      if (score > bestScore) { bestScore = score; best = e; }
+    }
+  }
+  return best;
+}
+
+function findSwaps(ingredient, qty) {
+  var entry = (typeof ingredient === 'string') ? findIngredient(ingredient) : ingredient;
+  if (!entry) {
+    return { found: false, ingredient: String(ingredient || ''), qty: (qty == null ? null : qty), swaps: [] };
+  }
+  return { found: true, ingredient: entry.n, qty: (qty == null ? null : qty), unitLabel: entry.u, swaps: entry.s };
+}
+
+function multiSwap(recipeText) {
+  var lines = String(recipeText || '').split(/\r?\n/);
+  var out = [];
+  for (var i = 0; i < lines.length; i++) {
+    var p = parseRecipeLine(lines[i]);
+    if (!p || !p.name) continue;
+    var entry = findIngredient(p.name);
+    out.push({
+      line: p.line, qty: p.qty, unit: p.unit, name: p.name,
+      found: !!entry, ingredient: entry ? entry.n : null,
+      swaps: entry ? entry.s : []
+    });
+  }
+  return out;
+}
+
+function checkAllergens(swap, profile) {
+  var al = (swap && swap.al) || [];
+  var prof = (profile || []).map(function (x) { return String(x).toLowerCase(); });
+  return al.filter(function (a) { return prof.indexOf(String(a).toLowerCase()) !== -1; });
+}
+
+function swapHasAllergen(swap, profile) {
+  return checkAllergens(swap, profile).length > 0;
+}
+
+function gcd(a, b) {
+  a = Math.abs(a); b = Math.abs(b);
+  while (b) { var t = b; b = a % b; a = t; }
+  return a || 1;
+}
+
+function formatAmount(n) {
+  if (n === null || n === undefined || isNaN(n)) return '';
+  var neg = n < 0;
+  n = Math.abs(n);
+  var whole = Math.floor(n), frac = n - whole;
+  if (frac < 0.03) return (neg ? '-' : '') + whole;
+  var num = 0, den = 1, bestErr = frac;
+  var ds = [2, 3, 4, 8];
+  for (var k = 0; k < ds.length; k++) {
+    var d = ds[k];
+    var mm = Math.round(frac * d);
+    var e = Math.abs(frac - mm / d);
+    if (e < bestErr - 1e-9) { bestErr = e; num = mm; den = d; }
+  }
+  if (num > 0) { var g = gcd(num, den); num /= g; den /= g; }
+  if (num === 0 || bestErr > 0.06) {
+    return (neg ? '-' : '') + (Math.round(n * 100) / 100);
+  }
+  if (num >= den) { whole += 1; num = 0; }
+  var out = num === 0 ? String(whole) : (whole === 0 ? num + '/' + den : whole + ' ' + num + '/' + den);
+  return (neg ? '-' : '') + out;
+}
+
+function scaleAmount(factor, qty) {
+  var f = parseFloat(factor), q = parseFloat(qty);
+  if (isNaN(f) || isNaN(q)) return null;
+  return f * q;
+}
+
+function reverseLookup(have, need, recipeQty, recipeUnit) {
+  var entry = findIngredient(need);
+  if (!entry) {
+    return { found: false, reason: 'No substitution data for "' + String(need || '') + '". Try a more common name.' };
+  }
+  var hq = normalizeName(have);
+  var sub = null;
+  for (var i = 0; i < entry.s.length; i++) {
+    var sn = normalizeName(entry.s[i].n);
+    if (!sn || !hq) continue;
+    if (sn.indexOf(hq) !== -1 || (hq.length >= 4 && hq.indexOf(sn) !== -1)) { sub = entry.s[i]; break; }
+  }
+  if (!sub) {
+    return { found: false, reason: '"' + String(have || '') + '" is not a listed substitute for ' + entry.n + '.' };
+  }
+  var q = parseFloat(recipeQty);
+  var scaled = isNaN(q) ? null : q * sub.f;
+  return {
+    found: true,
+    need: entry.n,
+    have: sub.n,
+    recipeQty: isNaN(q) ? null : q,
+    recipeUnit: recipeUnit || '',
+    amount: scaled,
+    amountText: scaled === null ? sub.r : formatAmount(scaled) + (recipeUnit ? ' ' + recipeUnit : ''),
+    ratio: sub.r,
+    impact: sub.i,
+    level: sub.l,
+    allergens: sub.al,
+    tip: sub.t
+  };
+}
+
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "What can I substitute for eggs in baking?", "acceptedAnswer": { "@type": "Answer", "text": "The best egg substitutes in baking are ground flaxseed mixed with water (1 tablespoon flaxseed + 3 tablespoons water per egg), unsweetened applesauce (1/4 cup per egg), mashed ripe banana (1/2 banana per egg), or plain yogurt (1/4 cup per egg). Flaxseed works best as a binder in muffins and pancakes, while applesauce and banana add moisture and sweetness to cakes and brownies." } },
+    { "@type": "Question", "name": "Can I substitute baking powder for baking soda?", "acceptedAnswer": { "@type": "Answer", "text": "Yes, but you need three times as much: use 3 teaspoons of baking powder for every 1 teaspoon of baking soda. Expect slightly less browning and a milder flavor. The reverse swap is easier: 1/4 teaspoon of baking soda plus 1/2 teaspoon of cream of tartar replaces 1 teaspoon of baking powder." } },
+    { "@type": "Question", "name": "What is the ratio for substituting dried herbs for fresh herbs?", "acceptedAnswer": { "@type": "Answer", "text": "Use the 3:1 rule: 1 teaspoon of dried herbs replaces 1 tablespoon of fresh herbs. Dried herbs are more concentrated but less bright, so add them earlier in cooking to let their flavor bloom." } },
+    { "@type": "Question", "name": "How do I replace butter with oil in a recipe?", "acceptedAnswer": { "@type": "Answer", "text": "Use 3/4 cup of oil for every 1 cup of butter. Oil makes cakes denser and moister but less rich in flavor. Olive oil suits savory bakes, while melted coconut oil or neutral vegetable oil works for sweet recipes." } },
+    { "@type": "Question", "name": "Are ingredient substitutions safe for people with food allergies?", "acceptedAnswer": { "@type": "Answer", "text": "Substitutions can accidentally introduce allergens — for example, swapping milk with almond milk introduces tree nuts. SwapChef flags every suggested swap against your saved allergen profile so you can see conflicts before you cook. Always double-check packaged substitute labels, as manufacturing can introduce cross-contact." } },
+    { "@type": "Question", "name": "How accurate is this ingredient substitution calculator?", "acceptedAnswer": { "@type": "Answer", "text": "SwapChef uses tested kitchen ratios from standard culinary references (for example, 1 cup buttermilk = 1 tablespoon acid + milk to 1 cup). Every swap also shows a flavor and texture impact note so you know what will change. Results are guidance for home cooking, not medical or professional food-production advice." } }
+  ]
+}
+</script>
+</head>
+<body class="font-sans antialiased" id="top">
+
+<!-- Sticky header -->
+<header class="sticky top-0 z-50 bg-cream/95 backdrop-blur border-b-2 border-terra/30">
+  <div class="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
+    <a href="#top" class="flex items-center gap-2">
+      <svg width="34" height="34" viewBox="0 0 40 40" fill="none" aria-hidden="true">
+        <path d="M12 16c-3 0-5-2.5-5-5.5C7 7 9.5 5 12 5c1 0 2 .4 2.7 1C15.5 3.5 17.8 2 20.5 2S25.5 3.5 26.3 6c.7-.6 1.7-1 2.7-1 2.5 0 5 2 5 5.5 0 3-2 5.5-5 5.5v3H12v-3z" fill="#E2725B"/>
+        <rect x="12" y="19" width="17" height="4" rx="2" fill="#2F5233"/>
+        <path d="M14 26h13l-1.5 10h-10L14 26z" fill="#E2725B"/>
+      </svg>
+      <span class="text-2xl font-extrabold tracking-tight text-terra">SwapChef</span>
+    </a>
+    <nav class="flex items-center gap-5 text-sm font-semibold">
+      <a href="#top" class="text-herb hover:text-terra">Home</a>
+      <a href="https://fixoraa.tech" class="text-herb hover:text-terra">More Tools</a>
+    </nav>
+  </div>
+</header>
+
+<!-- Hero -->
+<section class="max-w-6xl mx-auto px-4 sm:px-6 pt-10 pb-4 text-center">
+  <div class="inline-flex items-center gap-2 bg-herb text-cream text-xs font-bold uppercase tracking-widest px-4 py-2 rounded-full mb-5">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+    Unlimited Free Usage
+  </div>
+  <h1 class="text-4xl sm:text-5xl font-extrabold text-ink leading-tight">Missing an ingredient?<br><span class="text-terra">Swap it like a chef.</span></h1>
+  <p class="mt-4 text-lg text-ink/70 max-w-2xl mx-auto">SwapChef is the free ingredient substitution calculator that finds emergency swaps for 70+ common ingredients — with exact ratios, flavor &amp; texture impact notes, allergen conflict checks, and automatic quantity scaling. No signup, no paywall, ever.</p>
+</section>
+
+<!-- TOP AD -->
+<div class="no-print mx-auto max-w-6xl px-4 sm:px-6 pt-4" role="complementary" aria-label="Advertisement">
+  <div class="mx-auto text-center" style="max-width:728px">
+    <span class="block text-[10px] tracking-[0.18em] uppercase text-slate-400 mb-1.5">Advertisement</span>
+    <div class="flex justify-center overflow-hidden">
+      <div class="origin-top scale-[0.44] sm:scale-100 shrink-0">
+        <script>
+          atOptions = { 'key' : '4e68ac77881c17fe128a46565d9a4e8c', 'format' : 'iframe', 'height' : 90, 'width' : 728, 'params' : {} };
+        </script>
+        <script src="https://www.highrevenueformat.com/4e68ac77881c17fe128a46565d9a4e8c/invoke.js"></script>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TOOL -->
+<main class="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+  <div class="corkboard p-4 sm:p-8">
+
+    <!-- Corkboard title strip -->
+    <div class="text-center mb-6">
+      <span class="inline-block bg-cardcream px-6 py-2 rounded shadow-md font-hand text-xl text-ink tilt-l">The Substitution Board <span class="text-terra">— pin your emergency swaps here</span></span>
+    </div>
+
+    <!-- Allergen profile -->
+    <div class="index-card tilt-r max-w-3xl mx-auto p-5 sm:p-6 mb-8">
+      <div class="washi green"></div>
+      <h2 class="font-hand text-2xl text-herb mb-1 mt-2">My Allergen Profile</h2>
+      <p class="text-sm text-ink/60 mb-3">Tick anything you avoid. Every swap card will be flagged if it introduces one of these. Saved in your browser automatically.</p>
+      <div id="allergen-box" class="flex flex-wrap gap-2"></div>
+      <p id="allergen-saved" class="text-xs text-herb mt-2 h-4"></p>
+    </div>
+
+    <!-- Mode tabs -->
+    <div class="flex flex-wrap justify-center gap-3 mb-8 no-print">
+      <button data-tab="single" class="tab-btn active px-5 py-2.5 rounded-full font-bold text-sm bg-cardcream text-herb shadow-md border-2 border-herb/20">🔍 Single Swap</button>
+      <button data-tab="recipe" class="tab-btn px-5 py-2.5 rounded-full font-bold text-sm bg-cardcream text-herb shadow-md border-2 border-herb/20">📋 Whole Recipe</button>
+      <button data-tab="reverse" class="tab-btn px-5 py-2.5 rounded-full font-bold text-sm bg-cardcream text-herb shadow-md border-2 border-herb/20">🔄 Reverse Pantry</button>
+    </div>
+
+    <!-- TAB: single -->
+    <div id="tab-single" class="tab-panel">
+      <div class="index-card tilt-0 max-w-3xl mx-auto p-5 sm:p-8">
+        <div class="washi"></div>
+        <h2 class="font-hand text-2xl text-terra mt-2 mb-4">What can I substitute for…?</h2>
+        <div class="flex flex-col sm:flex-row gap-3">
+          <input id="single-ing" type="text" placeholder="e.g. buttermilk, egg, heavy cream…" class="flex-1 border-2 border-terra/30 rounded-lg px-4 py-3 text-base focus:outline-none focus:border-terra bg-white" aria-label="Ingredient to substitute">
+          <button id="single-go" class="bg-terra hover:bg-terradark text-white font-bold px-8 py-3 rounded-lg shadow transition">Find Swaps</button>
+        </div>
+        <div class="flex flex-wrap gap-2 mt-3 text-sm">
+          <span class="text-ink/50 self-center">Try:</span>
+          <button class="sample-chip underline decoration-dotted text-herb" data-v="egg">egg</button>
+          <button class="sample-chip underline decoration-dotted text-herb" data-v="butter">butter</button>
+          <button class="sample-chip underline decoration-dotted text-herb" data-v="baking powder">baking powder</button>
+          <button class="sample-chip underline decoration-dotted text-herb" data-v="sour cream">sour cream</button>
+        </div>
+        <div id="single-out" class="mt-6 grid gap-5 sm:grid-cols-2"></div>
+      </div>
+    </div>
+
+    <!-- TAB: recipe -->
+    <div id="tab-recipe" class="tab-panel hidden">
+      <div class="index-card tilt-l max-w-4xl mx-auto p-5 sm:p-8">
+        <div class="washi gold"></div>
+        <h2 class="font-hand text-2xl text-terra mt-2 mb-2">Swap my whole recipe</h2>
+        <p class="text-sm text-ink/60 mb-3">Paste your ingredient list — one ingredient per line, with amounts like <em>2 cups flour</em> or <em>1/2 tsp salt</em>. SwapChef suggests swaps for every line it recognizes.</p>
+        <textarea id="recipe-in" rows="7" class="w-full border-2 border-terra/30 rounded-lg px-4 py-3 text-base focus:outline-none focus:border-terra bg-white font-mono text-sm" placeholder="2 cups all-purpose flour&#10;1 cup sugar&#10;1/2 cup butter&#10;2 eggs&#10;1 tsp baking powder"></textarea>
+        <div class="flex flex-wrap gap-3 mt-3">
+          <button id="recipe-go" class="bg-herb hover:bg-herblight text-white font-bold px-8 py-3 rounded-lg shadow transition">Swap My Recipe</button>
+          <button id="recipe-sample" class="text-herb underline decoration-dotted text-sm self-center">load a sample cake recipe</button>
+        </div>
+        <div id="recipe-out" class="mt-6 grid gap-5 md:grid-cols-2"></div>
+      </div>
+    </div>
+
+    <!-- TAB: reverse -->
+    <div id="tab-reverse" class="tab-panel hidden">
+      <div class="index-card tilt-r max-w-3xl mx-auto p-5 sm:p-8">
+        <div class="washi green"></div>
+        <h2 class="font-hand text-2xl text-terra mt-2 mb-2">Reverse pantry lookup</h2>
+        <p class="text-sm text-ink/60 mb-4">“I <strong>have</strong> X but the recipe <strong>needs</strong> Y.” SwapChef checks the swap is valid and auto-scales the quantity to your recipe amount.</p>
+        <div class="grid sm:grid-cols-2 gap-3 mb-3">
+          <label class="block"><span class="text-sm font-bold text-herb">I HAVE</span>
+            <input id="rev-have" type="text" placeholder="e.g. honey" class="mt-1 w-full border-2 border-herb/30 rounded-lg px-4 py-3 focus:outline-none focus:border-herb bg-white" aria-label="Ingredient you have">
+          </label>
+          <label class="block"><span class="text-sm font-bold text-herb">RECIPE NEEDS</span>
+            <input id="rev-need" type="text" placeholder="e.g. sugar" class="mt-1 w-full border-2 border-herb/30 rounded-lg px-4 py-3 focus:outline-none focus:border-herb bg-white" aria-label="Ingredient the recipe needs">
+          </label>
+        </div>
+        <div class="flex flex-col sm:flex-row gap-3 items-stretch">
+          <label class="flex-1 block"><span class="text-sm font-bold text-herb">RECIPE CALLS FOR (amount)</span>
+            <span class="flex gap-2 mt-1">
+              <input id="rev-qty" type="text" inputmode="decimal" placeholder="1" class="w-24 border-2 border-herb/30 rounded-lg px-3 py-3 focus:outline-none focus:border-herb bg-white" aria-label="Recipe amount">
+              <input id="rev-unit" type="text" placeholder="cup" class="flex-1 border-2 border-herb/30 rounded-lg px-3 py-3 focus:outline-none focus:border-herb bg-white" aria-label="Recipe unit">
+            </span>
+          </label>
+          <button id="rev-go" class="bg-terra hover:bg-terradark text-white font-bold px-8 py-3 rounded-lg shadow transition self-end">Scale My Swap</button>
+        </div>
+        <div id="rev-out" class="mt-6"></div>
+      </div>
+    </div>
+
+    <!-- How-to pinned note -->
+    <div class="tape-note tilt-0 max-w-2xl mx-auto mt-8 p-4 rounded shadow-md text-sm text-ink/80">
+      <strong class="text-herb">Chef's note:</strong> ratios are starting points — taste as you go. The <strong>impact meter</strong> on each card tells you how much the flavor or texture will change: <span class="text-herblight font-bold">green</span> = barely noticeable, <span class="text-[#b98a2e] font-bold">amber</span> = noticeable, <span class="text-terradark font-bold">red</span> = big change.
+    </div>
+  </div>
+</main>
+
+<!-- BOTTOM AD -->
+<div class="no-print mx-auto max-w-6xl px-4 sm:px-6 pb-4" role="complementary" aria-label="Advertisement">
+  <div class="mx-auto text-center" style="max-width:728px">
+    <span class="block text-[10px] tracking-[0.18em] uppercase text-slate-400 mb-1.5">Advertisement</span>
+    <div class="flex justify-center overflow-hidden">
+      <script async src="https://js.wpadmngr.com/static/adManager.js" data-admpid="464498"></script>
+    </div>
+  </div>
+</div>
+
+<!-- SEO ARTICLE -->
+<article id="seo-article" class="max-w-4xl mx-auto px-4 sm:px-6 py-10 text-ink/85 leading-relaxed">
+  <h2 class="text-3xl font-extrabold text-ink mb-6">The Complete Guide to Ingredient Substitutions: Never Stall a Recipe Again</h2>
+
+  <p class="mb-4">You are halfway through a cake batter when you realize the egg carton is empty. The store is closed, guests arrive in two hours, and panic sets in. Every home cook has lived this moment — and the difference between a ruined evening and a triumphant dessert is knowing how ingredient substitution actually works. A good <strong>ingredient substitution calculator</strong> does more than hand you a ratio; it tells you what will change in flavor and texture, warns you about hidden allergens, and scales quantities to your exact recipe. That is exactly what SwapChef was built to do.</p>
+
+  <h3 class="text-2xl font-bold text-herb mt-8 mb-3">Why substitutions fail (and how to make them succeed)</h3>
+  <p class="mb-4">Most failed swaps share one root cause: the cook replaced the ingredient but ignored its <em>job</em> in the recipe. An egg in a cake is not just moisture — it is a binder, a leavener, and an emulsifier all at once. Replace it with applesauce and you get the moisture but lose some structure, which is why the crumb turns denser. Replace it with whipped aquafaba and you keep the lift but lose richness. Before swapping anything, ask three questions: What does this ingredient do here — structure, moisture, flavor, leavening, or fat? How much of the recipe depends on it? And what will the substitute change?</p>
+  <p class="mb-4">This is why SwapChef shows a <strong>flavor and texture impact note</strong> on every single swap, plus a simple three-level impact meter. A green meter means the change is barely noticeable — Greek yogurt for sour cream in a dip, for instance. Amber means you will notice it but the dish still works — olive oil for butter in a rustic cake gives a denser crumb with a fruity note. Red means a big transformation: swapping fresh onion for onion powder removes all texture, so it is fine in a spice rub but terrible in a salad. Knowing the impact level before you commit is the difference between a clever rescue and a disappointing surprise.</p>
+
+  <h3 class="text-2xl font-bold text-herb mt-8 mb-3">The emergency swaps every cook should memorize</h3>
+  <p class="mb-4">If you only memorize a handful of <strong>emergency ingredient swaps</strong>, make them these. Buttermilk: one tablespoon of lemon juice or white vinegar plus enough milk to make one cup, rested ten minutes — chemically near-identical to the cultured kind, and the acid reacts with baking soda exactly the way real buttermilk does. Self-rising flour: one cup of all-purpose flour plus one and a half teaspoons of baking powder and a quarter teaspoon of salt. Cake flour: three-quarters cup of all-purpose flour plus two tablespoons of cornstarch, sifted twice for a fine, tender crumb.</p>
+  <p class="mb-4">Baking powder and baking soda are the most confused pair in the pantry. They are not interchangeable one-to-one. To replace one teaspoon of baking powder, use a quarter teaspoon of baking soda plus half a teaspoon of cream of tartar — and bake immediately, because it is single-acting. To replace one teaspoon of baking soda, you need three teaspoons of baking powder, and expect slightly less browning. Brown sugar is simply white sugar plus molasses (one tablespoon per cup — two for dark brown), and powdered sugar is white sugar blitzed with a tablespoon of cornstarch. Heavy cream in a cooked sauce can be mimicked with three-quarters cup of half-and-half plus a quarter cup of melted butter, though it will not whip.</p>
+
+  <h3 class="text-2xl font-bold text-herb mt-8 mb-3">Dairy, egg, and gluten: swapping around dietary needs</h3>
+  <p class="mb-4">Dietary substitutions add a second layer of difficulty, because the substitute must avoid an entire category. For dairy-free cooking, coconut cream replaces heavy cream one-to-one in curries and soups, oat milk is the creamiest one-to-one milk swap, and refined coconut oil stands in for butter without any coconut aroma. For egg-free baking, the famous flax egg — one tablespoon of ground flaxseed whisked with three tablespoons of water and rested five minutes — binds muffins, pancakes, and quick breads beautifully. Unsweetened applesauce (a quarter cup per egg) adds moisture to cakes, while half a mashed ripe banana works wherever a banana note is welcome.</p>
+  <p class="mb-4">Gluten-free flour swaps deserve caution. Whole wheat flour can replace all-purpose flour at seven-eighths cup per cup, but it makes denser, heartier results and needs a little extra liquid. A commercial gluten-free 1:1 blend (one that includes xanthan gum) is the safest direct swap for cakes and cookies, though the crumb runs slightly grittier. And here is the trap most people miss: <strong>substitutions can introduce new allergens</strong>. Swapping cow's milk for almond milk solves a dairy problem and creates a tree-nut problem. Swapping peanut butter for almond butter trades a peanut issue for a tree-nut one. SwapChef's allergen conflict checker exists precisely for this — save your allergen profile once, and every suggested swap is flagged if it introduces something you avoid.</p>
+
+  <h3 class="text-2xl font-bold text-herb mt-8 mb-3">Herbs, spices, and the 3:1 rule</h3>
+  <p class="mb-4">Fresh versus dried herbs is the most-searched swap in this category, and the answer is the classic <strong>3:1 rule</strong>: one teaspoon of dried herbs replaces one tablespoon of fresh. Dried herbs are more concentrated but less bright, so add them earlier in the cooking process to let their flavor bloom in fat or liquid, whereas fresh herbs go in at the end. The same concentration logic applies elsewhere: one clove of garlic equals an eighth of a teaspoon of garlic powder (but reduce other salt if you use garlic salt — half a teaspoon per clove, cutting recipe salt accordingly), and one tablespoon of fresh grated ginger equals a quarter teaspoon of ground ginger.</p>
+  <p class="mb-4">Spice blends can rescue a bare spice rack. No cinnamon? Use pumpkin pie spice one-to-one, or half a teaspoon of nutmeg plus half a teaspoon of allspice per teaspoon of cinnamon — just ease off other warm spices. No black pepper for a light-colored sauce? White pepper swaps one-to-one without the black specks. But treat cayenne with respect: a quarter teaspoon replaces a full teaspoon of black pepper in heat, with none of the pepper flavor. These are the small ratios that separate confident improvisers from nervous recipe-followers.</p>
+
+  <h3 class="text-2xl font-bold text-herb mt-8 mb-3">Pantry acids, umami, and international ingredients</h3>
+  <p class="mb-4">Vinegars are wonderfully interchangeable with minor adjustments. Apple cider vinegar and white vinegar swap one-to-one; rice vinegar is milder, so add a pinch of sugar to match acidity. Balsamic's syrupy sweetness can be approximated with red wine vinegar plus half a teaspoon of sugar per tablespoon — simmer it to thicken for glazes. Lemon and lime juice are nearly interchangeable one-to-one; in a real pinch, half a tablespoon of white vinegar stands in for a tablespoon of lemon juice in dressings, though you lose the citrus note.</p>
+  <p class="mb-4">Asian pantry staples have their own swap logic. Tamari replaces soy sauce one-to-one and is usually gluten-free; coconut aminos are the soy-free, gluten-free option, though sweeter and milder. Fish sauce's funk can be approximated with soy sauce plus a squeeze of lime, or a tiny amount of anchovy paste thinned with water. Hoisin sauce can be built at home from soy sauce, peanut butter, sugar, and vinegar whisked smooth — a genuinely close homemade version. Miso paste thins out to soy sauce in a pinch (reduce other liquid), and tahini can be replaced with thinned peanut butter or, for nut-free kitchens, sunflower seed butter.</p>
+
+  <h3 class="text-2xl font-bold text-herb mt-8 mb-3">Scaling swaps: the math that matters</h3>
+  <p class="mb-4">The most common scaling mistake is applying a 1:1 instinct to a non-1:1 ratio. Honey replaces sugar at three-quarters cup per cup — but because honey is liquid, you must also reduce another liquid in the recipe by a quarter cup and lower the oven temperature by 25°F to prevent over-browning. Oil replaces butter at three-quarters cup per cup, not one-to-one. Shortening to butter goes the other way: use a cup plus two tablespoons of butter per cup of shortening, because butter contains water and shortening does not. Cornstarch to flour doubles: two tablespoons of flour thicken like one tablespoon of cornstarch, but you must cook the sauce a few minutes longer to eliminate the raw flour taste.</p>
+  <p class="mb-4">This is where SwapChef's <strong>reverse pantry lookup</strong> earns its keep. Tell it what you have and what the recipe needs — “I have honey, the recipe needs one cup of sugar” — and it verifies the swap is valid, then auto-scales the quantity to your exact recipe amount, formatted in kitchen-friendly fractions like 3/4 cup. No mental math, no conversion charts, no second-guessing at the stove.</p>
+
+  <h3 class="text-2xl font-bold text-herb mt-8 mb-3">Swapping a whole recipe at once</h3>
+  <p class="mb-4">Real-life cooking emergencies rarely involve a single missing ingredient. You open the fridge and discover you are out of butter <em>and</em> eggs <em>and</em> milk. Swapping each one individually, while keeping track of how the changes interact, is where most people give up and order takeout. SwapChef's whole-recipe mode lets you paste the full ingredient list — “2 cups flour, 1 cup sugar, 1/2 cup butter, 2 eggs, 1 tsp baking powder” — and returns substitution suggestions for every recognized line at once, each with its own ratio, impact meter, and allergen flags. You can see at a glance that the flax eggs will make the crumb denser while the oil-for-butter swap adds moisture, and decide whether the combined effect still works for the birthday cake you promised.</p>
+  <p class="mb-4">A word of honest caution: stacked substitutions compound. Three “medium impact” swaps in one delicate recipe — say, a soufflé or an angel food cake — can add up to a failure, because those recipes depend on precise protein and aeration chemistry. For forgiving recipes like pancakes, muffins, curries, soups, and stir-fries, multi-swapping is nearly always safe. For finicky ones, swap one ingredient, or choose only green-meter swaps. The impact meter is there to help you judge the total risk, not just each line in isolation.</p>
+
+  <h3 class="text-2xl font-bold text-herb mt-8 mb-3">Building your substitution instincts</h3>
+  <p class="mb-4">The cooks who improvise best are not walking encyclopedias — they understand categories. Fats swap with fats (butter, oils, ghee, shortening), acids swap with acids (vinegars, citrus), thickeners swap with thickeners (flours, starches, arrowroot), and sweeteners swap with sweeteners (sugars, honey, syrups) — with ratio and liquid adjustments. Within a category, start with the closest flavor match, check the impact meter, and adjust liquids when the substitute's water content differs. Keep a small “swap shelf” stocked — cornstarch, cream of tartar, dried milk powder, a neutral oil, honey, and one egg replacer — and you will rarely be stopped by a missing ingredient again.</p>
+  <p class="mb-4">Whether you are asking <strong>what can I substitute for eggs</strong> at midnight, scaling an emergency swap mid-recipe, or rebuilding a whole ingredient list around allergies, the principle is the same: replace the <em>function</em>, respect the <em>ratio</em>, and know the <em>impact</em> before you stir. Pin this page next to your recipe cards — consider SwapChef your always-open pantry backup, free forever, with no account and no paywall standing between you and dinner.</p>
+</article>
+
+<!-- FAQs -->
+<section class="max-w-4xl mx-auto px-4 sm:px-6 pb-12">
+  <h2 class="text-3xl font-extrabold text-ink mb-6 text-center">Frequently Asked Questions</h2>
+  <div class="space-y-4">
+    <details class="bg-white border-2 border-terra/20 rounded-lg p-4 shadow-sm">
+      <summary class="font-bold text-herb cursor-pointer">What can I substitute for eggs in baking?</summary>
+      <p class="mt-2 text-ink/75">The best egg substitutes in baking are ground flaxseed mixed with water (1 tablespoon flaxseed + 3 tablespoons water per egg), unsweetened applesauce (1/4 cup per egg), mashed ripe banana (1/2 banana per egg), or plain yogurt (1/4 cup per egg). Flaxseed works best as a binder in muffins and pancakes, while applesauce and banana add moisture to cakes and brownies.</p>
+    </details>
+    <details class="bg-white border-2 border-terra/20 rounded-lg p-4 shadow-sm">
+      <summary class="font-bold text-herb cursor-pointer">Can I substitute baking powder for baking soda?</summary>
+      <p class="mt-2 text-ink/75">Yes, but you need three times as much: use 3 teaspoons of baking powder for every 1 teaspoon of baking soda, and expect slightly less browning. The reverse is easier: 1/4 teaspoon of baking soda plus 1/2 teaspoon of cream of tartar replaces 1 teaspoon of baking powder — just bake immediately.</p>
+    </details>
+    <details class="bg-white border-2 border-terra/20 rounded-lg p-4 shadow-sm">
+      <summary class="font-bold text-herb cursor-pointer">What is the ratio for substituting dried herbs for fresh herbs?</summary>
+      <p class="mt-2 text-ink/75">Use the 3:1 rule: 1 teaspoon of dried herbs replaces 1 tablespoon of fresh herbs. Dried herbs are more concentrated but less bright, so add them earlier in cooking to let their flavor bloom.</p>
+    </details>
+    <details class="bg-white border-2 border-terra/20 rounded-lg p-4 shadow-sm">
+      <summary class="font-bold text-herb cursor-pointer">How do I replace butter with oil in a recipe?</summary>
+      <p class="mt-2 text-ink/75">Use 3/4 cup of oil for every 1 cup of butter — not 1:1. Oil makes cakes denser and moister but less rich. Olive oil suits savory bakes, while melted coconut oil or a neutral vegetable oil works for sweet recipes.</p>
+    </details>
+    <details class="bg-white border-2 border-terra/20 rounded-lg p-4 shadow-sm">
+      <summary class="font-bold text-herb cursor-pointer">Are ingredient substitutions safe for people with food allergies?</summary>
+      <p class="mt-2 text-ink/75">Substitutions can accidentally introduce allergens — for example, swapping milk with almond milk introduces tree nuts. SwapChef flags every suggested swap against your saved allergen profile so you can see conflicts before you cook. Always double-check packaged substitute labels for cross-contact warnings.</p>
+    </details>
+    <details class="bg-white border-2 border-terra/20 rounded-lg p-4 shadow-sm">
+      <summary class="font-bold text-herb cursor-pointer">How accurate is this ingredient substitution calculator?</summary>
+      <p class="mt-2 text-ink/75">SwapChef uses tested kitchen ratios from standard culinary references, and every swap includes a flavor and texture impact note so you know what will change. Results are guidance for home cooking, not medical or professional food-production advice.</p>
+    </details>
+  </div>
+</section>
+
+<footer class="border-t-2 border-terra/20 py-6 text-center text-sm text-ink/50">
+  <p><span class="font-bold text-terra">SwapChef</span> — free ingredient substitution calculator. No signup, no paywall.</p>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+  var PROFILE_KEY = 'swapchef-allergen-profile';
+  var ALLERGEN_LABELS = {};
+  try {
+    allergenList().forEach(function (a) { ALLERGEN_LABELS[a.id] = a.label; });
+  } catch (e) {}
+
+  function getProfile() {
+    try {
+      var raw = localStorage.getItem(PROFILE_KEY);
+      var arr = raw ? JSON.parse(raw) : [];
+      return Array.isArray(arr) ? arr : [];
+    } catch (e) { return []; }
+  }
+  function saveProfile(p) {
+    try { localStorage.setItem(PROFILE_KEY, JSON.stringify(p)); } catch (e) {}
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function impactMeter(level) {
+    var n = level === 'low' ? 1 : level === 'medium' ? 2 : 3;
+    var cls = level === 'low' ? 'on-low' : level === 'medium' ? 'on-med' : 'on-high';
+    var label = level === 'low' ? 'Mild change' : level === 'medium' ? 'Noticeable change' : 'Big change';
+    var segs = '';
+    for (var i = 0; i < 3; i++) segs += '<span class="impact-seg' + (i < n ? ' ' + cls : '') + '"></span>';
+    return '<span class="impact-meter" title="' + esc(label) + '">' + segs + '<span class="text-xs font-semibold text-ink/60 ml-1">' + esc(label) + '</span></span>';
+  }
+  function allergenBadges(sub) {
+    var profile = getProfile();
+    var conflicts = checkAllergens(sub, profile);
+    var out = '';
+    if (conflicts.length) {
+      out += '<div class="mt-2 inline-flex items-center gap-1.5 bg-red-100 border border-red-300 text-red-800 text-xs font-bold px-2.5 py-1 rounded-full">⚠ Contains: ' +
+        esc(conflicts.map(function (c) { return ALLERGEN_LABELS[c] || c; }).join(', ')) + '</div>';
+    } else if (sub.al && sub.al.length) {
+      out += '<div class="mt-2 text-xs text-ink/50">Allergens: ' + esc(sub.al.map(function (c) { return ALLERGEN_LABELS[c] || c; }).join(', ')) + '</div>';
+    }
+    return out;
+  }
+  function swapCard(sub, qtyText) {
+    var tilts = ['tilt-l', 'tilt-r', 'tilt-0'];
+    var tilt = tilts[Math.floor(Math.random() * tilts.length)];
+    var qtyLine = qtyText ? '<p class="text-xs text-ink/50 mb-1">For ' + esc(qtyText) + ' of original</p>' : '';
+    return '<div class="index-card ' + tilt + ' p-4 pt-5 text-left">' +
+      '<div class="washi' + (sub.l === 'low' ? ' green' : sub.l === 'high' ? '' : ' gold') + '" style="width:90px"></div>' +
+      qtyLine +
+      '<h3 class="font-hand text-lg text-herb leading-snug">' + esc(sub.n) + '</h3>' +
+      '<p class="text-sm mt-1"><strong class="text-terra">Ratio:</strong> ' + esc(sub.r) + '</p>' +
+      '<div class="mt-2">' + impactMeter(sub.l) + '</div>' +
+      '<p class="text-sm text-ink/75 mt-1 italic">“' + esc(sub.i) + '”</p>' +
+      (sub.t ? '<p class="text-xs text-ink/60 mt-2">💡 ' + esc(sub.t) + '</p>' : '') +
+      allergenBadges(sub) +
+      '</div>';
+  }
+  function emptyMsg(text) {
+    return '<div class="index-card tilt-0 p-6 text-center col-span-full"><div class="pin"></div><p class="font-hand text-xl text-ink/70 mt-2">' + esc(text) + '</p></div>';
+  }
+
+  /* ---- allergen profile UI ---- */
+  function renderAllergens() {
+    var box = document.getElementById('allergen-box');
+    var profile = getProfile();
+    box.innerHTML = '';
+    allergenList().forEach(function (a) {
+      var label = document.createElement('label');
+      label.className = 'inline-flex items-center gap-1.5 text-sm bg-cream border border-herb/30 rounded-full px-3 py-1.5 cursor-pointer select-none';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = a.id;
+      cb.checked = profile.indexOf(a.id) !== -1;
+      cb.className = 'accent-[#2F5233]';
+      cb.setAttribute('aria-label', a.label);
+      cb.addEventListener('change', function () {
+        var p = getProfile();
+        if (cb.checked && p.indexOf(a.id) === -1) p.push(a.id);
+        if (!cb.checked) p = p.filter(function (x) { return x !== a.id; });
+        saveProfile(p);
+        var note = document.getElementById('allergen-saved');
+        note.textContent = '✓ Saved in this browser';
+        setTimeout(function () { note.textContent = ''; }, 2000);
+      });
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(a.label));
+      box.appendChild(label);
+    });
+  }
+
+  /* ---- tabs ---- */
+  var tabBtns = document.querySelectorAll('.tab-btn');
+  tabBtns.forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      tabBtns.forEach(function (b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.add('hidden'); });
+      document.getElementById('tab-' + btn.getAttribute('data-tab')).classList.remove('hidden');
+    });
+  });
+
+  /* ---- single swap ---- */
+  function runSingle() {
+    var q = document.getElementById('single-ing').value.trim();
+    var out = document.getElementById('single-out');
+    if (!q) { out.innerHTML = emptyMsg('Type an ingredient above — e.g. “buttermilk” — and I’ll pin its swaps here.'); return; }
+    var res = findSwaps(q, null);
+    if (!res.found) {
+      out.innerHTML = emptyMsg('Hmm, no swaps on file for “' + q + '”. Try a simpler name like “egg”, “milk”, or “flour”.');
+      return;
+    }
+    var html = '<div class="col-span-full text-center"><span class="inline-block bg-herb text-cream text-sm font-bold px-4 py-1.5 rounded-full">Swaps for ' + esc(res.ingredient) + ' (' + res.swaps.length + ')</span></div>';
+    res.swaps.forEach(function (s) { html += swapCard(s, null); });
+    out.innerHTML = html;
+  }
+  document.getElementById('single-go').addEventListener('click', runSingle);
+  document.getElementById('single-ing').addEventListener('keydown', function (e) { if (e.key === 'Enter') runSingle(); });
+  document.querySelectorAll('.sample-chip').forEach(function (c) {
+    c.addEventListener('click', function () {
+      document.getElementById('single-ing').value = c.getAttribute('data-v');
+      runSingle();
+    });
+  });
+
+  /* ---- whole recipe ---- */
+  var SAMPLE_RECIPE = '2 cups all-purpose flour\n1 cup sugar\n1/2 cup butter\n2 eggs\n1 cup milk\n1 tsp baking powder\n1/2 tsp salt\n1 tsp vanilla extract';
+  document.getElementById('recipe-sample').addEventListener('click', function () {
+    document.getElementById('recipe-in').value = SAMPLE_RECIPE;
+  });
+  function runRecipe() {
+    var text = document.getElementById('recipe-in').value;
+    var out = document.getElementById('recipe-out');
+    if (!text.trim()) { out.innerHTML = emptyMsg('Paste your ingredient list above — one ingredient per line.'); return; }
+    var results = multiSwap(text);
+    if (!results.length) { out.innerHTML = emptyMsg('I couldn’t read any ingredient lines. Try “2 cups flour” format.'); return; }
+    var html = '';
+    var hitCount = 0;
+    results.forEach(function (r) {
+      var qtyText = (r.qty != null ? formatAmount(r.qty) + (r.unit ? ' ' + r.unit : '') : '') ;
+      if (r.found) {
+        hitCount++;
+        html += '<div class="index-card tilt-0 p-4 pt-5">' +
+          '<div class="washi green" style="width:90px"></div>' +
+          '<p class="text-xs uppercase tracking-wide text-ink/50">Original line</p>' +
+          '<p class="font-bold text-ink">' + esc(r.line) + '</p>' +
+          '<p class="text-sm text-herb font-semibold mt-1">→ recognized: ' + esc(r.ingredient) + '</p>' +
+          '<div class="mt-3 space-y-3">' +
+          r.swaps.map(function (s) {
+            return '<div class="border-t border-dashed border-herb/20 pt-3">' +
+              '<p class="font-bold text-sm text-ink">' + esc(s.n) + '</p>' +
+              '<p class="text-xs mt-0.5"><strong class="text-terra">Ratio:</strong> ' + esc(s.r) + '</p>' +
+              '<div class="mt-1">' + impactMeter(s.l) + '</div>' +
+              '<p class="text-xs text-ink/70 italic mt-0.5">“' + esc(s.i) + '”</p>' +
+              allergenBadges(s) +
+              '</div>';
+          }).join('') +
+          '</div></div>';
+      } else {
+        html += '<div class="index-card tilt-l p-4 pt-5 opacity-90">' +
+          '<div class="pin"></div>' +
+          '<p class="text-xs uppercase tracking-wide text-ink/50 mt-2">Original line</p>' +
+          '<p class="font-bold text-ink">' + esc(r.line) + '</p>' +
+          '<p class="text-sm text-ink/60 mt-2 italic">No swaps on file for “' + esc(r.name) + '” — it may already be a pantry staple, or try a simpler name.</p>' +
+          '</div>';
+      }
+    });
+    html = '<div class="col-span-full text-center"><span class="inline-block bg-terra text-white text-sm font-bold px-4 py-1.5 rounded-full">' +
+      hitCount + ' of ' + results.length + ' lines matched</span></div>' + html;
+    out.innerHTML = html;
+  }
+  document.getElementById('recipe-go').addEventListener('click', runRecipe);
+
+  /* ---- reverse pantry ---- */
+  function runReverse() {
+    var have = document.getElementById('rev-have').value.trim();
+    var need = document.getElementById('rev-need').value.trim();
+    var qty = document.getElementById('rev-qty').value.trim();
+    var unit = document.getElementById('rev-unit').value.trim();
+    var out = document.getElementById('rev-out');
+    if (!have || !need) { out.innerHTML = emptyMsg('Tell me what you HAVE and what the recipe NEEDS.'); return; }
+    var res = reverseLookup(have, need, qty, unit);
+    if (!res.found) { out.innerHTML = emptyMsg(res.reason); return; }
+    var qtyText = res.recipeQty != null ? formatAmount(res.recipeQty) + (res.recipeUnit ? ' ' + res.recipeUnit : '') : null;
+    var html = '<div class="bg-herb text-cream rounded-lg p-4 text-center font-bold mb-4">Use <span class="text-2xl align-middle">' +
+      esc(res.amountText) + '</span> of ' + esc(res.have) + (qtyText ? ' <span class="font-normal opacity-80">instead of ' + esc(qtyText) + ' ' + esc(res.need) + '</span>' : ' instead of ' + esc(res.need)) + '</div>';
+    html += swapCard({ n: res.have, r: res.ratio, i: res.impact, l: res.level, al: res.allergens, t: res.tip }, null);
+    out.innerHTML = html;
+  }
+  document.getElementById('rev-go').addEventListener('click', runReverse);
+  ['rev-have', 'rev-need', 'rev-qty', 'rev-unit'].forEach(function (id) {
+    document.getElementById(id).addEventListener('keydown', function (e) { if (e.key === 'Enter') runReverse(); });
+  });
+
+  renderAllergens();
+})();
+</script>
+</body>
+</html>
